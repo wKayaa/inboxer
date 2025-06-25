@@ -1,3 +1,17 @@
+#!/usr/bin/env python3
+"""
+AWS SES Email Sender with Unique Email Generation
+
+RECENT CHANGES:
+- Replaced fixed sender email list with domain-based unique email generation
+- Each email now uses a unique random sender address (e.g., randomstring@domain.com)
+- Improved anti-spam delivery by avoiding repeated sender addresses
+- Configuration now requires domain instead of sender emails file
+- All other functionality preserved (AWS SES integration, HTML templates, etc.)
+
+Usage: python3 awsinboxer.py
+"""
+
 import os
 import sys
 import subprocess
