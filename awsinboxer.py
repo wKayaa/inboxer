@@ -11,10 +11,17 @@ from concurrent.futures import ThreadPoolExecutor
 import time
 from itertools import cycle
 import csv
+import random
+import string
 
 init(autoreset=True)
 
 CONFIG_FILE = 'aws_ses_config.json'
+
+def generate_random_email_prefix(length=16):
+    """Generate a random alphanumeric string for email prefix"""
+    characters = string.ascii_lowercase + string.digits
+    return ''.join(random.choice(characters) for _ in range(length))
 
 def install_packages():
     try:
@@ -72,21 +79,25 @@ def get_aws_credentials():
     access_key_id = input("Enter your AWS Access Key ID: " if lang == "EN" else "Entrez votre AWS Access Key ID : ")
     secret_access_key = input("Enter your AWS Secret Access Key: " if lang == "EN" else "Entrez votre AWS Secret Access Key : ")
     region = input("Enter your AWS region (e.g., us-east-1): " if lang == "EN" else "Entrez votre région AWS (ex: us-east-1) : ")
-    sender_file = input("Enter path to verified sender emails file: " if lang == "EN" else "Chemin du fichier des emails vérifiés : ")
+    sender_domain = input("Enter your verified domain (e.g., example.com): " if lang == "EN" else "Entrez votre domaine vérifié (ex: example.com) : ")
 
-    if not os.path.isfile(sender_file):
-        print(Fore.RED + ("File not found." if lang == "EN" else "Fichier non trouvé.") + Style.RESET_ALL)
+    if not sender_domain or not sender_domain.strip():
+        print(Fore.RED + ("Domain cannot be empty." if lang == "EN" else "Le domaine ne peut pas être vide.") + Style.RESET_ALL)
         return None, None, None, None, None
 
-    with open(sender_file, 'r') as f:
-        sender_emails = [line.strip() for line in f if line.strip()]
+    # Clean the domain (remove any protocol prefix or trailing slash)
+    sender_domain = sender_domain.strip().lower()
+    if sender_domain.startswith("http://") or sender_domain.startswith("https://"):
+        sender_domain = sender_domain.split("//")[1]
+    if sender_domain.endswith("/"):
+        sender_domain = sender_domain[:-1]
 
-    print(Fore.GREEN + (f"Verified senders loaded: {len(sender_emails)}" if lang == "EN" else f"Expéditeurs vérifiés chargés : {len(sender_emails)}"))
-    for email in sender_emails:
-        print(Fore.CYAN + f" - {email}")
+    print(Fore.GREEN + (f"Using domain: {sender_domain}" if lang == "EN" else f"Utilisation du domaine : {sender_domain}"))
+    print(Fore.CYAN + (f"Unique sender emails will be generated for each recipient using format: randomstring@{sender_domain}" if lang == "EN" 
+                       else f"Des emails d'expéditeur uniques seront générés pour chaque destinataire au format : chaineAleatoire@{sender_domain}"))
 
     sender_name = input("Sender name: " if lang == "EN" else "Nom de l'expéditeur : ")
-    return access_key_id, secret_access_key, region, sender_emails, sender_name
+    return access_key_id, secret_access_key, region, sender_domain, sender_name
 
 def load_recipients(file_path):
     recipients = []
@@ -137,31 +148,43 @@ def main():
             aws_access_key_id = config['aws_access_key_id']
             aws_secret_access_key = config['aws_secret_access_key']
             aws_region = config['aws_region']
-            sender_emails = config['sender_emails']
+            # Handle backward compatibility: if old config has sender_emails list, ask for new domain
+            if 'sender_domain' in config:
+                sender_domain = config['sender_domain']
+            else:
+                print(Fore.YELLOW + ("Old configuration detected. Please provide domain for unique email generation." if lang == "EN" 
+                                     else "Ancienne configuration détectée. Veuillez fournir le domaine pour la génération d'emails uniques."))
+                sender_domain = input("Enter your verified domain (e.g., example.com): " if lang == "EN" else "Entrez votre domaine vérifié (ex: example.com) : ")
+                if not sender_domain or not sender_domain.strip():
+                    print(Fore.RED + ("Domain cannot be empty." if lang == "EN" else "Le domaine ne peut pas être vide.") + Style.RESET_ALL)
+                    return
+                # Update config to new format
+                config['sender_domain'] = sender_domain
+                save_configuration(config)
             sender_name = config.get('sender_name', "Sender")
         elif choice == '2':
-            aws_access_key_id, aws_secret_access_key, aws_region, sender_emails, sender_name = get_aws_credentials()
-            if not all([aws_access_key_id, aws_secret_access_key, aws_region, sender_emails]):
+            aws_access_key_id, aws_secret_access_key, aws_region, sender_domain, sender_name = get_aws_credentials()
+            if not all([aws_access_key_id, aws_secret_access_key, aws_region, sender_domain]):
                 return
             save_configuration({
                 'aws_access_key_id': aws_access_key_id,
                 'aws_secret_access_key': aws_secret_access_key,
                 'aws_region': aws_region,
-                'sender_emails': sender_emails,
+                'sender_domain': sender_domain,
                 'sender_name': sender_name
             })
         else:
             print(Fore.RED + "Invalid choice." + Style.RESET_ALL)
             return
     else:
-        aws_access_key_id, aws_secret_access_key, aws_region, sender_emails, sender_name = get_aws_credentials()
-        if not all([aws_access_key_id, aws_secret_access_key, aws_region, sender_emails]):
+        aws_access_key_id, aws_secret_access_key, aws_region, sender_domain, sender_name = get_aws_credentials()
+        if not all([aws_access_key_id, aws_secret_access_key, aws_region, sender_domain]):
             return
         save_configuration({
             'aws_access_key_id': aws_access_key_id,
             'aws_secret_access_key': aws_secret_access_key,
             'aws_region': aws_region,
-            'sender_emails': sender_emails,
+            'sender_domain': sender_domain,
             'sender_name': sender_name
         })
 
@@ -208,11 +231,11 @@ def main():
         print(Fore.RED + "Invalid rate." + Style.RESET_ALL)
         return
 
-    sender_cycle = cycle(sender_emails)
-
     def send_task(recipient):
-        sender = next(sender_cycle)
-        send_raw_email(client, sender, recipient, subject, email_content, sender_name)
+        # Generate a unique sender email for this recipient
+        unique_prefix = generate_random_email_prefix()
+        sender_email = f"{unique_prefix}@{sender_domain}"
+        send_raw_email(client, sender_email, recipient, subject, email_content, sender_name)
 
     print(Fore.CYAN + "Sending..." + Style.RESET_ALL)
     with ThreadPoolExecutor(max_workers=rate) as executor:
